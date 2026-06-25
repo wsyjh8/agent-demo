@@ -1,0 +1,10 @@
+# Python 字节码缓存
+__pycache__/
+*.py[cod]
+
+# Agent 运行时产物(由 python agent.py 生成,非源码)
+memory.json
+_ckpt/
+
+# 本地 / 机器相关配置
+.claude/

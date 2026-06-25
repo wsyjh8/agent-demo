@@ -1,0 +1,24 @@
+# Auto breakpoints for stepping through one Agent.run call.
+# Launch from this directory with: python -m pdb debug_agent2.py
+
+break agent.py:711
+break agent.py:717
+break agent.py:718
+break agent.py:722
+break agent.py:723
+break agent.py:724
+break agent.py:725
+break agent.py:726
+break agent.py:727
+break agent.py:731
+break agent.py:733
+break agent.py:735
+break agent.py:737
+
+alias ps pp state.scratch
+alias ph pp [(h.step.intent, h.action.tool if h.action else None, h.result.ok, h.verdict) for h in state.history]
+alias pst pp step
+alias pa pp action
+alias pr pp result
+
+continue

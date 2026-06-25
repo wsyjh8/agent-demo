@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一个 Agent 是怎么工作的 —— 跟着 agent.py 的 run() 走一遍</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2230; --muted:#5b6577; --line:#e4e8ee;
+    --code-bg:#0f1730; --code-ink:#d7e0f5;
+    /* 五层配色 */
+    --c-data:#2563eb;   --c-data-bg:#eef4ff;
+    --c-ctrl:#d97706;   --c-ctrl-bg:#fff5e6;
+    --c-ctx:#7c3aed;    --c-ctx-bg:#f4eeff;
+    --c-mem:#059669;    --c-mem-bg:#e8f7f1;
+    --c-prod:#dc2626;   --c-prod-bg:#fdecec;
+    --c-brain:#b8860b;  --c-brain-bg:#fbf3da;
+    --radius:14px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.75; font-size:16px;
+  }
+  code,pre,.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+
+  /* 布局:左侧固定 TOC + 右侧内容 */
+  .layout{display:grid; grid-template-columns:280px 1fr; max-width:1280px; margin:0 auto;}
+  nav.toc{
+    position:sticky; top:0; align-self:start; height:100vh; overflow-y:auto;
+    padding:26px 18px 60px; border-right:1px solid var(--line); background:var(--panel);
+  }
+  nav.toc h1{font-size:15px; margin:0 0 4px; letter-spacing:.3px}
+  nav.toc .sub{font-size:12px; color:var(--muted); margin-bottom:18px}
+  nav.toc a{
+    display:block; text-decoration:none; color:var(--muted); font-size:13.5px;
+    padding:6px 10px; border-radius:8px; border-left:3px solid transparent; transition:.15s;
+  }
+  nav.toc a:hover{background:#f1f3f7; color:var(--ink)}
+  nav.toc a.active{background:#eef2fb; color:var(--c-data); border-left-color:var(--c-data); font-weight:600}
+  nav.toc a.lvl2{padding-left:22px; font-size:12.5px}
+  nav.toc .grp{margin-top:14px; font-size:11px; text-transform:uppercase; letter-spacing:.8px; color:#9aa3b2; padding:0 10px}
+
+  main{padding:42px 52px 120px; min-width:0;}
+  section{margin-bottom:64px; scroll-margin-top:24px}
+  h2{font-size:27px; margin:0 0 6px; line-height:1.3}
+  h3{font-size:20px; margin:34px 0 10px}
+  h4{font-size:16px; margin:22px 0 8px}
+  p{margin:10px 0}
+  .lead{font-size:17px; color:#37425a}
+  a.src{color:inherit}
+
+  .hero{
+    background:linear-gradient(135deg,#101a36,#1f2d52); color:#eaf0ff;
+    border-radius:var(--radius); padding:38px 40px; margin-bottom:48px;
+  }
+  .hero h2{color:#fff; font-size:30px; margin-bottom:14px}
+  .hero p{color:#c5d0ea; font-size:16px}
+  .hero .tag{display:inline-block; background:rgba(255,255,255,.12); color:#dce6ff;
+    padding:4px 12px; border-radius:999px; font-size:12.5px; margin:2px 6px 2px 0}
+
+  /* 通用卡片 */
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:22px 24px; margin:16px 0;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px}
+  .grid3{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+  @media(max-width:1100px){.grid2,.grid3{grid-template-columns:1fr}}
+
+  /* 层标记 */
+  .badge{display:inline-block; font-size:12px; font-weight:700; padding:3px 11px;
+    border-radius:999px; color:#fff; vertical-align:middle; margin-left:8px}
+  .b-data{background:var(--c-data)} .b-ctrl{background:var(--c-ctrl)}
+  .b-ctx{background:var(--c-ctx)} .b-mem{background:var(--c-mem)}
+  .b-prod{background:var(--c-prod)} .b-brain{background:var(--c-brain)}
+
+  .layerhead{display:flex; align-items:center; gap:12px; padding:14px 18px; border-radius:12px;
+    margin:40px 0 8px; color:#fff; font-weight:700; font-size:18px}
+  .lh-data{background:var(--c-data)} .lh-ctrl{background:var(--c-ctrl)}
+  .lh-ctx{background:var(--c-ctx)} .lh-mem{background:var(--c-mem)}
+  .lh-prod{background:var(--c-prod)} .lh-brain{background:linear-gradient(90deg,#b8860b,#d4a017)}
+  .layerhead .n{background:rgba(255,255,255,.22); border-radius:8px; padding:2px 10px; font-size:14px}
+
+  /* 组件讲解卡:左侧色条 */
+  .comp{border:1px solid var(--line); border-left-width:5px; border-radius:12px;
+    background:var(--panel); padding:20px 22px; margin:16px 0}
+  .comp.data{border-left-color:var(--c-data)} .comp.ctrl{border-left-color:var(--c-ctrl)}
+  .comp.ctx{border-left-color:var(--c-ctx)} .comp.mem{border-left-color:var(--c-mem)}
+  .comp.prod{border-left-color:var(--c-prod)} .comp.brain{border-left-color:var(--c-brain)}
+  .comp .title{font-size:18px; font-weight:700; margin-bottom:2px}
+  .comp .where{font-size:12.5px; color:var(--muted); margin-bottom:12px}
+  .comp .where code{background:#eef1f6; padding:1px 6px; border-radius:5px}
+
+  /* 四问表格 */
+  .faq{display:grid; grid-template-columns:96px 1fr; gap:0; margin-top:8px; font-size:14.5px}
+  .faq dt{font-weight:700; color:var(--ink); padding:7px 12px 7px 0; border-top:1px solid var(--line)}
+  .faq dd{margin:0; padding:7px 0; border-top:1px solid var(--line); color:#39435a}
+  .faq .q-scene{color:var(--c-data)}
+  .springline{margin-top:12px; font-size:13.5px; background:#eef4ff; color:#22325e;
+    border-radius:8px; padding:8px 12px}
+  .springline b{color:var(--c-data)}
+
+  /* 代码块 */
+  pre{background:var(--code-bg); color:var(--code-ink); border-radius:10px; padding:16px 18px;
+    overflow-x:auto; font-size:13px; line-height:1.65; margin:12px 0}
+  pre .cm{color:#7f8db5} pre .kw{color:#ff9d6b} pre .st{color:#8fe3a0} pre .fn{color:#7cc7ff}
+  code.inline{background:#eef1f6; padding:1px 6px; border-radius:5px; font-size:13.5px; color:#b1306b}
+
+  details{margin:12px 0; border:1px solid var(--line); border-radius:10px; overflow:hidden; background:#fbfcfe}
+  details>summary{cursor:pointer; padding:10px 16px; font-weight:600; font-size:14px;
+    background:#f3f5f9; list-style:none; user-select:none}
+  details>summary::before{content:"▸ "; color:var(--muted)}
+  details[open]>summary::before{content:"▾ "}
+  details .inner{padding:4px 16px 14px}
+
+  table.cmp{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px}
+  table.cmp th,table.cmp td{border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top}
+  table.cmp th{background:#f1f4f9; font-weight:700}
+  table.cmp td code{background:#eef1f6; padding:1px 5px; border-radius:4px}
+  table.cmp tr:nth-child(even) td{background:#fafbfd}
+
+  .callout{border-radius:10px; padding:14px 18px; margin:16px 0; font-size:14.5px}
+  .callout.key{background:#fff8e6; border:1px solid #f3dca0}
+  .callout.warn{background:#fdecec; border:1px solid #f3b6b6}
+  .callout.tip{background:#e8f7f1; border:1px solid #aee3cd}
+  .callout b{color:inherit}
+
+  /* 流程图通用 */
+  .flow{display:flex; flex-direction:column; gap:10px; margin:18px 0}
+  .frow{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .node{border-radius:10px; padding:9px 14px; font-size:13.5px; font-weight:600; color:#fff; white-space:nowrap}
+  .arrow{color:var(--muted); font-weight:700}
+  .pill{display:inline-block; background:#eef1f6; border-radius:6px; padding:1px 8px; font-size:12.5px; color:#33405c; margin:2px}
+
+  /* 11 步竖列 */
+  .loop{counter-reset:none; margin:8px 0}
+  .step{display:grid; grid-template-columns:48px 1fr; gap:14px; align-items:stretch; margin:0}
+  .step .num{display:flex; align-items:center; justify-content:center; font-weight:800; font-size:16px;
+    color:#fff; border-radius:10px; margin:6px 0}
+  .step .body{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:11px 16px; margin:6px 0}
+  .step .body .st-t{font-weight:700} .step .body .st-d{font-size:13.5px; color:var(--muted)}
+  .step .body code{background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:12.5px}
+
+  /* trace 时间线 */
+  .trace .tline{border:1px solid var(--line); border-radius:12px; padding:16px 18px; margin:14px 0; background:var(--panel)}
+  .trace .tline h4{margin:0 0 10px; display:flex; align-items:center; gap:10px}
+  .trace .roundtag{background:#101a36; color:#fff; border-radius:8px; padding:3px 10px; font-size:13px}
+  .kv{font-size:13.5px; margin:3px 0}
+  .kv .k{display:inline-block; min-width:118px; color:var(--muted)}
+  .kv .v code{background:#eef1f6; padding:1px 6px; border-radius:5px}
+
+  .tags{display:flex; flex-wrap:wrap; gap:6px; margin:8px 0}
+  .logtag{font-family:monospace; font-size:12px; background:#101a36; color:#9fe6c0; padding:2px 8px; border-radius:6px}
+
+  hr{border:none; border-top:1px dashed var(--line); margin:30px 0}
+  .totop{position:fixed; right:22px; bottom:22px; background:#101a36; color:#fff; text-decoration:none;
+    border-radius:50%; width:46px; height:46px; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 6px 18px rgba(0,0,0,.2)}
+  .footnote{font-size:13px; color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ============ 左侧目录 ============ -->
+<nav class="toc" id="toc">
+  <h1>Agent 是怎么工作的</h1>
+  <div class="sub">跟着 <code>agent.py</code> 的 run() 走一遍</div>
+  <a href="#intro">0 · 先建立一个直觉</a>
+  <a href="#overview">1 · 全景:一次 run() 的调用链</a>
+  <a href="#spring">2 · Spring ↔ Agent 对照表</a>
+  <div class="grp">分层精讲</div>
+  <a href="#L0" class="lvl2">数据平面(跑完一步)</a>
+  <a href="#L1" class="lvl2">控制环(才叫 agent)</a>
+  <a href="#L2" class="lvl2">上下文(给大脑看)</a>
+  <a href="#L3" class="lvl2">分层记忆(记什么)</a>
+  <a href="#L4" class="lvl2">生产边界(敢动手)</a>
+  <a href="#brain" class="lvl2">★ LLM 接缝</a>
+  <div class="grp">实战</div>
+  <a href="#trace">3 · 跟示例走一遍(逐步)</a>
+  <a href="#branches">4 · 三条分支场景</a>
+  <a href="#concepts">5 · 五组易混概念</a>
+  <a href="#extend">6 · 接真实 LLM / 扩展</a>
+</nav>
+
+<!-- ============ 右侧正文 ============ -->
+<main>
+
+  <div class="hero">
+    <h2>一个 Agent 是怎么工作的?</h2>
+    <p>从你的一句话,到最后拿到结果,中间到底走了哪些流程、谁调用谁、每一步遇到什么、怎么处理、为什么这么处理。</p>
+    <p style="margin-top:16px">
+      <span class="tag">单文件 agent.py · 811 行</span>
+      <span class="tag">零第三方依赖</span>
+      <span class="tag">LLM 用规则代替(可复现)</span>
+      <span class="tag">架构 = 真实 agent</span>
+    </p>
+    <p style="margin-top:14px; color:#9fb0d8; font-size:14px">
+      你懂 Spring,所以全篇我会用「最小 Spring Boot」给你架桥。读完你会明白:agent 不是什么神秘黑魔法,
+      它就是 <b style="color:#fff">在你熟悉的「Controller→Service→DAO」外面,套了一圈会自我决策的 while 循环</b>。
+    </p>
+  </div>
+
+  <!-- ===================== 0 直觉 ===================== -->
+  <section id="intro">
+    <h2>0 · 先建立一个直觉:agent 比 pipeline 多了什么</h2>
+    <p class="lead">这是全篇最重要的一句话,先记住它,后面所有细节都挂在它上面。</p>
+
+    <div class="callout key">
+      <b>Spring 应用是一条单向管道:</b>请求进来 → 走一遍 Controller→Service→DAO → 响应出去,跑完就结束。<br>
+      <b>Agent 多出来的,是一圈「控制环」:</b>它会<b>自己决定下一步做什么、自己判断上一步结果好不好、出错了自己改道、满足条件才停下来</b>。
+      <br><br>
+      那条 <code class="inline">Controller→Service→DAO</code> 的链,在 agent 里<b>只是「跑一步」的内部细节</b>;
+      外面套着的那句 <code class="inline">while not Terminator.should_stop(state)</code>(<a class="src">agent.py:717</a>)——
+      <b>这圈循环,就是 pipeline 和 agent 的唯一分界线。</b>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h4 style="margin-top:0">① Pipeline(你熟悉的 Spring)</h4>
+        <div class="flow">
+          <div class="frow"><span class="node" style="background:#64748b">请求</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-data)">Controller</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-data)">Service</span></div>
+          <div class="frow"><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-data)">DAO</span><span class="arrow">→</span>
+            <span class="node" style="background:#64748b">响应</span></div>
+        </div>
+        <p class="footnote">一条直线,跑一次就完。它<b>不会</b>回头看自己做得怎么样,也<b>不会</b>自己决定要不要再来一步。</p>
+      </div>
+      <div class="card">
+        <h4 style="margin-top:0">② Agent(多了一圈控制环)</h4>
+        <div class="flow">
+          <div class="frow"><span class="node" style="background:#64748b">目标</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-ctrl)">拆计划</span></div>
+          <div class="frow" style="border:2px dashed var(--c-ctrl); border-radius:12px; padding:10px; background:var(--c-ctrl-bg)">
+            <span class="arrow" style="color:var(--c-ctrl)">↻ 循环:</span>
+            <span class="node" style="background:var(--c-ctrl)">选下一步</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-data)">执行一步</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-ctrl)">自评</span><span class="arrow">→</span>
+            <span class="node" style="background:var(--c-ctrl)">该停吗?</span></div>
+          <div class="frow"><span class="arrow">→</span><span class="node" style="background:#64748b">结果</span></div>
+        </div>
+        <p class="footnote">「执行一步」内部,就是上面那条 pipeline。外面套的循环会<b>自评、改道、决定何时停</b>——这就是「自驱」。</p>
+      </div>
+    </div>
+
+    <h3>几个名词,先用大白话翻译一遍</h3>
+    <table class="cmp">
+      <tr><th>名词</th><th>大白话</th><th>在本项目里是谁</th></tr>
+      <tr><td><b>Agent(智能体)</b></td><td>一个会「自己分步骤、自己调工具、自己纠错」直到把目标做完的程序</td><td>整个 <code>Agent</code> 类(<a class="src">agent.py:666</a>)</td></tr>
+      <tr><td><b>Tool(工具)</b></td><td>agent 能调用的一个个小能力,比如查数据、算数、写文件</td><td><code>lookup / calculator / write_note</code></td></tr>
+      <tr><td><b>LLM / 大脑</b></td><td>负责「看着现状,决定下一步调哪个工具、传什么参数」的决策者</td><td><code>Brain.decide</code>,本项目用规则假装(<a class="src">agent.py:648</a>)</td></tr>
+      <tr><td><b>Plan(计划)</b></td><td>把一个大目标拆成有顺序的几小步</td><td><code>Planner.plan</code> → <code>查→算→记</code></td></tr>
+      <tr><td><b>Context(上下文)</b></td><td>每次让大脑决策前,喂给它看的那一坨材料(现状+记忆+可用工具)</td><td><code>ContextBuilder.build</code></td></tr>
+      <tr><td><b>Memory(记忆)</b></td><td>agent 记住的东西:这次干到哪了 + 以前干过啥</td><td><code>State</code> + <code>LongTermMemory</code></td></tr>
+    </table>
+
+    <div class="callout tip">
+      <b>本项目的关键巧思:</b>真实 agent 的「大脑」是大模型(GPT/Claude),它的回答<b>不确定、要联网、要花钱、难调试</b>。
+      作者把大脑换成了<b>一段确定性的 if-else 规则</b>(<code>Policy.choose</code>),于是程序每次跑结果都一样、断网能跑、能单步调试。
+      <b>但除了「大脑」这一个点,其余架构和真实 agent 完全一致</b>——以后你接 GPT,只改一个函数(见<a href="#brain">第 ★ 节</a>)。
+    </div>
+  </section>
+
+  <!-- ===================== 1 全景 ===================== -->
+  <section id="overview">
+    <h2>1 · 全景:一次 <code>run()</code> 的完整调用链</h2>
+    <p class="lead">先不抠细节,把「从输入到结果」的主干看一遍。所有代码都在一个入口函数里:<code class="inline">Agent.run(goal)</code>(<a class="src">agent.py:703</a>)。</p>
+
+    <h3>我们要完成的示例任务</h3>
+    <div class="card" style="text-align:center; font-size:17px">
+      用户输入(<a class="src">agent.py:805</a>):
+      <div style="margin:10px 0; font-weight:700; color:var(--c-data)">「查 btc_price 的当前价格, 按 10 倍估算, 把结果写进笔记 portfolio」</div>
+      <span class="pill">需要多步</span><span class="pill">第 2 步要用第 1 步的结果</span>
+      <span class="pill">写文件 = 有副作用 = 高风险</span><span class="pill">要落盘持久化</span>
+    </div>
+    <p>这个任务是<b>精心设计</b>的:它一次就能点亮 agent 的所有组件——多步链式调用逼出「控制环」,写文件逼出「生产边界」,落盘逼出「长期记忆」。</p>
+
+    <h3>主干三段式</h3>
+    <div class="flow">
+      <div class="frow">
+        <span class="node" style="background:#64748b">goal 字符串</span><span class="arrow">→</span>
+        <span class="node" style="background:var(--c-data)">IntentParser.parse<br><small>文本→结构化意图</small></span><span class="arrow">→</span>
+        <span class="node" style="background:var(--c-ctrl)">Planner.plan<br><small>意图→有序步骤</small></span>
+      </div>
+      <div class="frow">
+        <span class="arrow">→</span>
+        <span class="node" style="background:var(--c-ctrl); padding:14px 20px">while not Terminator.should_stop(state) &nbsp;↻<br><small>控制环:反复跑「①~⑪ 十一步」直到该停</small></span>
+      </div>
+      <div class="frow">
+        <span class="arrow">→</span>
+        <span class="node" style="background:#64748b">_finish<br><small>收尾→最终答案</small></span>
+      </div>
+    </div>
+
+    <h3>循环体里的「11 步」(本项目的灵魂)</h3>
+    <p>每转一圈,agent 就把下面 11 件事做一遍。<b>这 11 步读懂了,你就读懂了「一个 agent 由哪些组件构成、谁调用谁」。</b>(对应 <a class="src">agent.py:718-737</a>)颜色代表它属于哪一层。</p>
+
+    <div class="loop">
+      <div class="step"><div class="num" style="background:var(--c-ctrl)">①</div><div class="body"><span class="st-t">取出当前要做的步骤</span> <span class="badge b-ctrl">控制环</span><div class="st-d"><code>state.next_step() or Planner.replan()</code> —— 没有现成步骤就重新规划</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-ctx)">②</div><div class="body"><span class="st-t">拼出「给大脑看的上下文」</span> <span class="badge b-ctx">上下文</span><div class="st-d"><code>ContextBuilder.build()</code> —— system 指令 + 最近几步 + 召回的旧记忆 + 工具清单</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-brain)">③</div><div class="body"><span class="st-t">大脑决策:调哪个工具、传什么参</span> <span class="badge b-brain">LLM 接缝</span><div class="st-d"><code>Brain.decide(ctx)</code> —— 产出一个 <code>Action</code>。<b>真实场景这里就是调大模型</b></div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-prod)">④</div><div class="body"><span class="st-t">动手前:输入护栏</span> <span class="badge b-prod">生产边界</span><div class="st-d"><code>Guardrails.check_input()</code> —— 参数合法但危险?拦下来或改写</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-prod)">⑤</div><div class="body"><span class="st-t">高风险动作 → 过人审门</span> <span class="badge b-prod">生产边界</span><div class="st-d"><code>if action.risk==HIGH: Approval.request()</code> —— human-in-the-loop</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-data)">⑥</div><div class="body"><span class="st-t">真正执行工具</span> <span class="badge b-data">数据平面</span><span class="badge b-prod">生产边界</span><div class="st-d"><code>Executor.run()</code> = 鉴权 → 幂等 → 重试 → <code>Router</code> → 工具函数</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-prod)">⑦</div><div class="body"><span class="st-t">出手后:输出护栏</span> <span class="badge b-prod">生产边界</span><div class="st-d"><code>Guardrails.check_output()</code> —— 输出脱敏(把 token=xxx 打码)</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-ctrl)">⑧</div><div class="body"><span class="st-t">自评:这步干得怎么样?</span> <span class="badge b-ctrl">控制环</span><div class="st-d"><code>Reflector.review()</code> → <code>continue | retry | replan | done</code> —— <b>它决定循环往哪走</b></div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-mem)">⑨</div><div class="body"><span class="st-t">写「工作记忆」</span> <span class="badge b-mem">记忆</span><div class="st-d"><code>state.update()</code> —— 记下这步结果、推进/回退步骤指针</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-mem)">⑩</div><div class="body"><span class="st-t">写「长期记忆」(成功才写)</span> <span class="badge b-mem">记忆</span><div class="st-d"><code>ltm.remember()</code> —— 落盘到 memory.json,给「未来的自己」</div></div></div>
+      <div class="step"><div class="num" style="background:var(--c-prod)">⑪</div><div class="body"><span class="st-t">记一条 trace + 累计预算</span> <span class="badge b-prod">生产边界</span><div class="st-d"><code>tracer.record()</code> —— 给运维/你看的运行日志 + 伪 token 计数</div></div></div>
+    </div>
+
+    <details>
+      <summary>展开:run() 主循环源码(去掉日志后的骨架,对照上面 11 步)</summary>
+      <div class="inner">
+<pre><span class="kw">def</span> <span class="fn">run</span>(self, goal):
+    intent = IntentParser.parse(goal)              <span class="cm"># 文本 → 意图   (Controller)</span>
+    plan   = Planner.plan(intent)                  <span class="cm"># 意图 → 有序 steps</span>
+    state  = State.new(goal, plan, self.cfg)       <span class="cm"># working memory</span>
+    <span class="kw">while not</span> Terminator.should_stop(state):       <span class="cm"># ← agent 的出口(≠ pipeline)</span>
+        step = state.next_step() <span class="kw">or</span> Planner.replan(state)     <span class="cm"># ① 做哪一步</span>
+        <span class="kw">if</span> step <span class="kw">is</span> None: state.done = True; <span class="kw">break</span>
+        action = None
+        <span class="kw">try</span>:
+            ctx    = ContextBuilder.build(step, state, self.ltm, self.tools)  <span class="cm"># ② 拼上下文</span>
+            action = Brain.decide(ctx)                       <span class="cm"># ③ 选工具+定参(★LLM 接缝)</span>
+            action = Guardrails.check_input(action)          <span class="cm"># ④ 输入护栏</span>
+            <span class="kw">if</span> action.risk == HIGH: self.approval.request(action)   <span class="cm"># ⑤ 人审门</span>
+            result = self.executor.run(action)               <span class="cm"># ⑥ 执行(权限/重试/幂等)</span>
+            result = Guardrails.check_output(result)          <span class="cm"># ⑦ 输出护栏</span>
+        <span class="kw">except</span> BoundaryBlock <span class="kw">as</span> e:                          <span class="cm"># 被边界拦下 → 记为失败</span>
+            result = Result(False, error=f<span class="st">"BOUNDARY:{...}"</span>)
+        verdict = Reflector.review(step, result, state)       <span class="cm"># ⑧ 自评 → 循环走向</span>
+        state.update(step, action, result, verdict)           <span class="cm"># ⑨ 写工作记忆</span>
+        <span class="kw">if</span> action <span class="kw">and</span> result.ok:
+            self.ltm.remember(step, action, result)           <span class="cm"># ⑩ 写长期记忆</span>
+        self.tracer.record(step, action, result, verdict, state)  <span class="cm"># ⑪ trace+预算</span>
+    <span class="kw">return</span> self._finish(state)                            <span class="cm"># 收尾 → 最终答案</span></pre>
+      </div>
+    </details>
+  </section>
+
+  <!-- ===================== 2 Spring 对照 ===================== -->
+  <section id="spring">
+    <h2>2 · Spring ↔ Agent 对照表</h2>
+    <p class="lead">你脑子里已经有 Spring 的分层。直接把 agent 的新概念挂上去——大部分组件你其实都「见过」,只是换了个名字。</p>
+    <table class="cmp">
+      <tr><th>Spring 里的角色</th><th>这个 agent 里的对应</th><th>它干嘛的</th></tr>
+      <tr><td><code>@RestController</code> 解析入参</td><td><code>IntentParser.parse</code></td><td>把自然语言变成结构化对象</td></tr>
+      <tr><td><code>@Service</code> 业务决策</td><td><code>Policy.choose</code></td><td>决定调哪个工具、拼什么参数</td></tr>
+      <tr><td><code>@Repository</code> / DAO</td><td><code>tool_lookup</code> / <code>calculator</code> / <code>write_note</code></td><td>真正干活的最小单元</td></tr>
+      <tr><td><code>DispatcherServlet</code> 按名分发</td><td><code>Router.dispatch</code></td><td>按工具名找到对应函数并调用</td></tr>
+      <tr><td><code>@ExceptionHandler</code></td><td><code>error_handler</code></td><td>异常 → 统一的 Result(ok=False)</td></tr>
+      <tr><td><code>HttpSession</code> / 请求作用域</td><td><code>State</code>(工作记忆)</td><td>本次请求的临时状态</td></tr>
+      <tr><td>DB / <code>JpaRepository</code></td><td><code>LongTermMemory</code>(memory.json)</td><td>跨请求持久化</td></tr>
+      <tr><td>全文 / 向量检索</td><td><code>semantic_recall</code></td><td>按相关度从历史里捞回经验</td></tr>
+      <tr><td><code>@Valid</code> 校验 + 出参脱敏</td><td><code>Guardrails.check_input/output</code></td><td>拦危险参数、给输出打码</td></tr>
+      <tr><td>审批流</td><td><code>Approval.request</code></td><td>高风险操作前等人点头</td></tr>
+      <tr><td>Spring Security 鉴权</td><td><code>Executor._check_permission</code></td><td>这次允不允许调这个工具</td></tr>
+      <tr><td><code>@Transactional</code> / 重试模板</td><td><code>Executor.run</code></td><td>重试 + 幂等,包住「执行」这件事</td></tr>
+      <tr><td>AOP 日志 / Micrometer</td><td><code>Tracer</code></td><td>记录每步耗时、token、cost</td></tr>
+      <tr><td><code>@SpringBootTest</code></td><td><code>evaluate()</code></td><td>批量回归测试</td></tr>
+      <tr style="background:var(--c-ctrl-bg)"><td><b>(Spring 没有)</b></td><td><b><code>Planner / Terminator / Reflector</code></b></td><td><b>控制环</b>:拆步骤、判停、自评改道</td></tr>
+      <tr style="background:var(--c-brain-bg)"><td><b>(Spring 没有)</b></td><td><b><code>Brain.decide</code></b></td><td><b>LLM 接缝</b>:把决策权交给大模型</td></tr>
+    </table>
+    <div class="callout key">
+      <b>看这张表,记住两件 Spring 没有、agent 独有的东西:</b>
+      ① <b style="color:var(--c-ctrl)">控制环</b>(它会自驱、自评、改道、判停);
+      ② <b style="color:var(--c-brain)">LLM 接缝</b>(决策不再写死在 Service 里,而是交给大模型动态决定)。
+      其余的,你都能在 Spring 里找到对应。
+    </div>
+  </section>
+
+  <!-- ===================== 分层精讲 ===================== -->
+  <section id="L0">
+    <div class="layerhead lh-data"><span class="n">Layer 0</span> 数据平面(Data Plane)—— 先让「一步」能跑完</div>
+    <p class="lead">这一层回答:<b>「这一步」具体怎么做完?</b> 它就是你熟悉的 Controller→Service→DAO。控制环每转一圈,内部跑的就是这一层。</p>
+
+    <div class="comp data">
+      <div class="title">IntentParser.parse —— 把人话变成结构 <span class="badge b-data">Controller</span></div>
+      <div class="where">代码:<code>agent.py:234-255</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>用户给的是一句自然语言:「查 btc_price… 按 10 倍… 写进笔记 portfolio」。程序没法直接吃一句话。</dd>
+        <dt>用什么方法</dt><dd>正则匹配,从句子里抠出 4 个关键信息:查什么 key、做什么运算、倍数、写哪个笔记。</dd>
+        <dt>怎么处理</dt><dd>产出一个字典 <code>{"key":"btc_price","op":"mul","factor":10.0,"note_key":"portfolio"}</code>。</dd>
+        <dt>为什么</dt><dd>后面的决策(无论规则还是 LLM)都吃结构化数据更稳。先把「人话」标准化,是整条链的第一道工序。</dd>
+      </dl>
+      <div class="springline">🔗 对应 Spring 的 <b>@RestController</b>:把 HTTP 请求体反序列化成 DTO。真实系统这里可换成 NLU 模型或 LLM。</div>
+    </div>
+
+    <div class="comp data">
+      <div class="title">Policy.choose —— 决定调哪个工具、传什么参 <span class="badge b-data">Service</span></div>
+      <div class="where">代码:<code>agent.py:257-280</code>(它就是当前的「假大脑」,将来被 LLM 取代)</div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>现在轮到某一步(比如「算公式」),需要决定:用哪个工具?参数从哪来?</dd>
+        <dt>用什么方法</dt><dd>按步骤类型 <code>step.intent</code> 分支:lookup 步→选 lookup;calc 步→选 calculator;note 步→选 write_note。</dd>
+        <dt>怎么处理</dt><dd><b>关键动作:把上一步的输出注入这一步的参数</b>。算公式时 <code>a = state.scratch.get("lookup")</code> 取出刚查到的 50000。产出一个 <code>Action(tool, args, risk, why)</code>。</dd>
+        <dt>为什么</dt><dd>「决定做什么」(业务决策)必须和「怎么把工具调起来」(执行)分开。这一层是大脑,执行是手脚。</dd>
+      </dl>
+      <div class="springline">🔗 对应 <b>@Service</b>:业务编排。<b>这是全项目最关键的一层</b>——把它换成大模型,规则 agent 就变成真 agent。</div>
+    </div>
+
+    <div class="comp data">
+      <div class="title">Tools —— 真正干活的最小单元 <span class="badge b-data">DAO</span></div>
+      <div class="where">代码:<code>tool_lookup</code> <code>agent.py:208</code> · <code>tool_calculator</code> <code>agent.py:217</code> · <code>write_note</code> <code>agent.py:434</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>需要一个个具体能力:查数值、算四则运算、把文本写进文件。</dd>
+        <dt>用什么方法</dt><dd>就是普通函数。<code>lookup/calculator</code> 是<b>纯函数</b>(不改外部世界);<code>write_note</code> 有<b>副作用</b>(写文件)。</dd>
+        <dt>怎么处理</dt><dd><b>工具只管做事,出错就直接抛异常</b>,不自己处理「崩了怎么办」——那是上层的事。</dd>
+        <dt>为什么</dt><dd>职责单一。工具保持「傻而干净」,把重试、鉴权、错误处理统统留给外面的 Executor,工具本身才好复用、好测试。</dd>
+      </dl>
+      <div class="springline">🔗 对应 <b>@Repository / DAO</b>:只负责一次数据访问或副作用,不掺业务判断。</div>
+    </div>
+
+    <div class="grid2">
+      <div class="comp data">
+        <div class="title">Router.dispatch <span class="badge b-data">DispatcherServlet</span></div>
+        <div class="where"><code>agent.py:282-294</code></div>
+        <p style="font-size:14px"><b>场景:</b>大脑说「调 write_note」,但它给的只是个<b>名字字符串</b>。<br>
+        <b>方法:</b>用名字去工具注册表 <code>tools</code> 里查出对应函数,<code>tool.fn(**action.args)</code> 调起来。<br>
+        <b>为什么:</b>决策层只该说「调谁」,不该关心「谁具体是哪个函数」。一层解耦。</p>
+      </div>
+      <div class="comp data">
+        <div class="title">error_handler <span class="badge b-data">@ExceptionHandler</span></div>
+        <div class="where"><code>agent.py:296-305</code></div>
+        <p style="font-size:14px"><b>场景:</b>工具抛了异常(比如查了个不存在的 key)。<br>
+        <b>方法:</b>把异常捕获,包成统一的 <code>Result(ok=False, error="...")</code>。<br>
+        <b>为什么:</b>让上层循环用统一的「成功/失败对象」来推进,而不用到处写 try/except。它<b>只负责包装,不负责判断要不要重试</b>(那是 Reflector 的活)。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="L1">
+    <div class="layerhead lh-ctrl"><span class="n">Layer 1</span> 控制环 —— 让它从 pipeline 变成 agent</div>
+    <p class="lead">这一层回答:<b>现在做哪一步?要不要停?上一步结果好不好?</b> 没有这一层,它就只是个跑一遍就结束的脚本。<b>这是 agent 的「灵魂三件套」。</b></p>
+
+    <div class="comp ctrl">
+      <div class="title">Planner.plan / replan —— 拆步骤 & 出错改道</div>
+      <div class="where">代码:<code>agent.py:308-341</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>目标是「查→算→记」,不是一步能完成的;而且查询可能失败,需要换条路。</dd>
+        <dt>用什么方法</dt><dd><b>plan</b>:把意图拆成固定三步 <code>[查事实, 算公式, 记笔记]</code>。<b>replan</b>:若 lookup 失败且没兜底过,就把查询步换成兜底 key(<code>btc_price</code>)重试。</dd>
+        <dt>怎么处理</dt><dd>plan 在循环<b>开始前</b>做一次;replan 在循环<b>中途</b>、当 Reflector 判定「replan」时被调用,改写剩余步骤。</dd>
+        <dt>为什么</dt><dd>agent 要「先想清楚分几步」而不是写死一条路径;遇错能改道,而不是直接崩。真实 agent 这里通常也是 LLM 做规划。</dd>
+      </dl>
+      <div class="springline">🔗 Spring 里<b>没有</b>对应物——这是 agent 独有的「自己安排工作」的能力。</div>
+    </div>
+
+    <div class="comp ctrl">
+      <div class="title">Terminator.should_stop —— 循环的出口(★)</div>
+      <div class="where">代码:<code>agent.py:343-361</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>循环必须有个停的条件,否则要么死循环、要么退化成跑一遍的 pipeline。</dd>
+        <dt>用什么方法</dt><dd>每圈循环开头检查四个条件,任一满足就停:① 目标达成 ② 超最大步数 ③ 超预算(伪 token) ④ 连续失败超阈值。</dd>
+        <dt>怎么处理</dt><dd>返回 True 就跳出 while,并把停止原因写进 <code>state.stop_reason</code>。</dd>
+        <dt>为什么</dt><dd><b>这就是 agent 的出口,是 pipeline 与 agent 的分界线。</b>它让「跑多久」由状态动态决定,而不是写死的步数。也是防止 LLM 抽风把钱烧光的保险丝。</dd>
+      </dl>
+    </div>
+
+    <div class="comp ctrl">
+      <div class="title">Reflector.review —— 自评,把「单发」变成「循环」(★)</div>
+      <div class="where">代码:<code>agent.py:363-380</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>一步执行完了,结果可能成功、可能失败、可能失败但还能救。下一圈该怎么走?</dd>
+        <dt>用什么方法</dt><dd>看结果给出四种判决之一:<code>continue</code>(成功,进下一步)/ <code>retry</code>(失败但还有余量,重做本步)/ <code>replan</code>(查询失败,换条路)/ <code>done</code>(完成,或彻底放弃)。</dd>
+        <dt>怎么处理</dt><dd>这个判决(verdict)被 <code>state.update</code> 用来决定:步骤指针前进、原地不动、还是触发重规划。</dd>
+        <dt>为什么</dt><dd><b>这是把「执行一次」变成「真正 loop」的关键。</b>没有自评,agent 就不会纠错,做错了也只会一条道走到黑。</dd>
+      </dl>
+    </div>
+    <div class="callout key"><b>一句话记住这一层:</b><code>Planner</code> 安排活、<code>Reflector</code> 评判活、<code>Terminator</code> 喊收工。三个一凑齐,脚本就升级成了 agent。</div>
+  </section>
+
+  <section id="L2">
+    <div class="layerhead lh-ctx"><span class="n">Layer 2</span> 上下文 —— 决策前,给大脑看对的东西</div>
+    <p class="lead">这一层回答:<b>做决策前,该把什么材料端到大脑面前?</b> 真实场景里,这一坨材料<b>就是要发给 LLM 的 prompt</b>。拼得好不好,直接决定决策质量。</p>
+
+    <div class="comp ctx">
+      <div class="title">ContextBuilder.build —— 组装「决策上下文」</div>
+      <div class="where">代码:<code>agent.py:383-400</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>大脑要做决策,但它需要先「知道现状」:我在干嘛、刚才做了啥、以前有没有类似经验、手头有哪些工具。</dd>
+        <dt>用什么方法</dt><dd>把四样东西拼成一个 <code>Context</code> 对象:<br>
+          ① <b>system</b>:系统指令(「你是一个多工具 agent…」)<br>
+          ② <b>working</b>:本次最近 2 步(<code>state.recent(2)</code>,按时间)<br>
+          ③ <b>recalled</b>:从长期记忆里按相关度召回 2 条(<code>semantic_recall</code>)<br>
+          ④ <b>schemas</b>:所有工具的 <code>(名字, 说明, 风险)</code></dd>
+        <dt>怎么处理</dt><dd>真实 agent 会把这个对象序列化成一串 messages 发给大模型;本项目里它被规则大脑直接读取。</dd>
+        <dt>为什么</dt><dd>大脑不是先知,你喂它什么它才能看到什么。把「拼上下文」单独抽一层,以后优化 prompt / 加记忆只动这里。</dd>
+      </dl>
+    </div>
+
+    <div class="grid2">
+      <div class="comp ctx">
+        <div class="title">Tool schema —— 让大脑「按描述选工具」</div>
+        <div class="where"><code>agent.py:107</code>(Tool 结构) · <code>685</code>(注册)</div>
+        <p style="font-size:14px">每个工具自带 <code>description</code>(干嘛的)和 <code>risk</code>(风险等级)。<br>
+        <b>为什么重要:</b>大脑不是靠「有个工具名列表」选工具,而是<b>读描述</b>来判断「这事该用哪个」。风险等级则决定它要不要先过审批门。</p>
+      </div>
+      <div class="comp ctx">
+        <div class="title">semantic_recall —— 按「相关」而非「最近」捞经验</div>
+        <div class="where"><code>agent.py:463-472</code></div>
+        <p style="font-size:14px">从长期记忆里,按和当前任务的<b>语义相关度</b>排序,取最相关的 K 条。<br>
+        本项目用「词重叠数量」当相关度打分(demo 版);真实系统换成 <b>embedding 向量检索</b>。<br>
+        它和「取最近 N 条」(<code>recent</code>)是<b>两个不同方法</b>——详见<a href="#concepts">第 5 节</a>。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="L3">
+    <div class="layerhead lh-mem"><span class="n">Layer 3</span> 分层记忆 —— 记什么、记多久、怎么取回</div>
+    <p class="lead">这一层回答:<b>agent 该记住什么?</b> 答案是三种记忆,<b>职责完全不同,千万别混成一张表</b>。</p>
+
+    <div class="grid3">
+      <div class="comp mem">
+        <div class="title" style="font-size:16px">① working memory</div>
+        <div class="where"><code>State</code> · <code>agent.py:133</code></div>
+        <p style="font-size:13.5px"><b>本次 run 的便签纸。</b>纯内存,跑完就丢。<br><br>
+        存:计划进度(<code>cursor</code>)、中间结果(<code>scratch</code>)、失败次数、累计成本。<br><br>
+        <b>为什么要它:</b>步骤之间要传值——算公式得用上一步查到的 50000,就靠 <code>scratch</code> 中转。</p>
+      </div>
+      <div class="comp mem">
+        <div class="title" style="font-size:16px">② long-term memory</div>
+        <div class="where"><code>memory.json</code> · <code>agent.py:404</code></div>
+        <p style="font-size:13.5px"><b>跨 run / 跨进程的持久经验。</b>写到磁盘文件。<br><br>
+        存:业务笔记(<code>notes</code>)+ 执行情节(<code>episodes</code>)。<br><br>
+        <b>为什么要它:</b>agent 要记住「以前做过什么」。<b>连跑两次 <code>python agent.py</code>,第二次开头能读到上次写的</b>——那就是它在起作用。</p>
+      </div>
+      <div class="comp mem">
+        <div class="title" style="font-size:16px">③ semantic memory</div>
+        <div class="where"><code>semantic_recall</code> · <code>agent.py:463</code></div>
+        <p style="font-size:13.5px"><b>不是第三个仓库</b>,而是「查长期记忆的一种姿势」——按相关度召回。<br><br>
+        和按时间取最近的 <code>recent</code> 对照,证明:<b>取回相关 ≠ 取回最近</b>。<br><br>
+        <b>为什么要它:</b>经验多了以后,得能按「和当前任务有多像」找回,而不是全量翻或只看最近。</p>
+      </div>
+    </div>
+    <div class="callout tip"><b>对照你的 Spring 经验:</b>working memory ≈ <code>HttpSession</code>(请求级);long-term ≈ 数据库 / <code>JpaRepository</code>;semantic ≈ 在数据库上做全文/向量检索。三者天然不同,记忆也一样。</div>
+  </section>
+
+  <section id="L4">
+    <div class="layerhead lh-prod"><span class="n">Layer 4</span> 生产边界 —— 敢不敢对真实世界动手的分水岭</div>
+    <p class="lead">这一层回答:<b>能不能安全地对真实世界动手?</b> demo 不需要它也能跑;但工具一旦有副作用、联网、花钱,这一层就是「能不能上生产」的底线。</p>
+
+    <div class="comp prod">
+      <div class="title">Guardrails —— 管「合法但危险」(注意:≠ 错误处理)</div>
+      <div class="where">代码:<code>agent.py:475-516</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>参数本身没毛病、代码不会崩,但<b>业务上危险</b>:算个天文数字、往 <code>system</code> 这种敏感 key 写、笔记文本超长。</dd>
+        <dt>用什么方法</dt><dd><b>check_input</b>(动手前):参数范围检查、禁写 key 黑名单(拦截)、超长文本截断(改写)。<b>check_output</b>(出手后):把输出里的 <code>token=xxx</code> 打码成 <code>***</code>。</dd>
+        <dt>怎么处理</dt><dd>该拦的抛 <code>GuardrailBlock</code>(被主循环捕获、记为失败);该改的就地改写参数再放行。</dd>
+        <dt>为什么</dt><dd><b>它和 error_handler 是两回事:</b>error_handler 管「崩了」(事后兜底),Guardrails 管「没崩但危险」(事前拦/改)。安全和正确,是两个维度。</dd>
+      </dl>
+      <div class="springline">🔗 对应 <b>@Valid 参数校验 + 出参脱敏</b>。</div>
+    </div>
+
+    <div class="grid2">
+      <div class="comp prod">
+        <div class="title">Approval —— 人审门 <span class="badge b-prod">human-in-the-loop</span></div>
+        <div class="where"><code>agent.py:518-537</code></div>
+        <p style="font-size:14px"><b>场景:</b>高风险工具(本项目里只有 <code>write_note</code>)动手前,得有人点头。<br>
+        <b>方法:</b>demo 用 <code>auto=True</code> 自动放行,但会打印 <code>[APPROVE]</code>;真实场景这里 <code>input()</code> 或回调审批系统、<b>阻塞等人</b>。<br>
+        <b>为什么:</b>有些动作(转账、删库、发邮件)代价不可逆,必须留一道人工闸门。</p>
+      </div>
+      <div class="comp prod">
+        <div class="title">Permissions —— 鉴权 <span class="badge b-prod">Spring Security</span></div>
+        <div class="where"><code>Executor._check_permission</code> · <code>agent.py:555</code></div>
+        <p style="font-size:14px"><b>场景:</b>这次 run 到底被授权能调哪些工具?<br>
+        <b>方法:</b>执行前检查工具名是否在 <code>allowed</code> 白名单里,不在就抛 <code>PermissionDenied</code>。<br>
+        <b>为什么:</b>给 agent 一个「沙箱」边界——哪怕大脑抽风想调危险工具,没授权也调不动。</p>
+      </div>
+    </div>
+
+    <div class="comp prod">
+      <div class="title">Retry / backoff + 幂等 —— 把「执行」做扎实</div>
+      <div class="where">代码:<code>Executor.run</code> <code>agent.py:581-610</code> · 幂等 key <code>562</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>真实世界会<b>偶发抽风</b>(网络抖动、临时 503);而有副作用的操作(写文件)<b>不能因为重试就写两遍</b>。</dd>
+        <dt>用什么方法</dt><dd><b>重试:</b>瞬时错误(<code>TransientError</code>)就退避等待后重试,最多 N 次。<b>幂等:</b>用 <code>工具名+参数</code> 算一个 hash 当 key,同样的调用第二次直接返回缓存、<b>跳过副作用</b>。</dd>
+        <dt>怎么处理</dt><dd>本项目故意给 <code>write_note</code> 注入「第一次必失败」:于是你能看到「第 1 次瞬时失败→退避→第 2 次成功」;之后再提交同一个写操作,幂等命中,<b>真实写入次数保持 1 次不变</b>。</dd>
+        <dt>为什么</dt><dd>没有重试,偶发故障就让整个任务失败;没有幂等,重试又会导致重复扣款/重复写入。两者必须配对。</dd>
+      </dl>
+      <div class="springline">🔗 对应 <b>@Transactional / Spring Retry 模板</b>:把重试、幂等这些「执行边界」收在一处。</div>
+    </div>
+
+    <div class="comp prod">
+      <div class="title">Tracer + budget —— 运行日志和预算(注意:≠ Memory)</div>
+      <div class="where">代码:<code>agent.py:612-645</code></div>
+      <p style="font-size:14px"><b>场景:</b>你要 debug、要算成本、要防止跑太久烧太多。<br>
+      <b>方法:</b>每步记一行(工具、是否成功、判决、伪 token);累计 <code>cost</code> 回写 state,供 Terminator 检查预算。<br>
+      <b>为什么和 Memory 分开:</b><code>Trace 给人看</code>(运维/调试),<code>Memory 给 agent 看</code>(决策依据)。你不会让 agent 把「自己花了多少 token」当成业务事实去回忆。</p>
+    </div>
+  </section>
+
+  <section id="brain">
+    <div class="layerhead lh-brain"><span class="n">★</span> LLM 接缝 —— 整个项目唯一需要改成大模型的地方</div>
+    <div class="comp brain">
+      <div class="title">Brain.decide</div>
+      <div class="where">代码:<code>agent.py:648-663</code></div>
+      <dl class="faq">
+        <dt class="q-scene">遇到什么</dt><dd>上下文已经拼好了(<code>ctx</code>),现在要产出一个决策:调哪个工具、传什么参。</dd>
+        <dt>用什么方法</dt><dd><b>现在:</b>调用规则大脑 <code>Policy.choose(ctx...)</code>,返回一个 <code>Action</code>。<br><b>将来接 LLM:</b>把 <code>ctx</code> 序列化成 messages 发给 GPT/Claude,让它返回一段 JSON,再解析成 <code>Action</code>。</dd>
+        <dt>怎么处理</dt><dd>它是一层<b>薄壳</b>。入参 <code>ctx</code> 早已是「拼好的 prompt 材料」(system + 工作记忆 + 召回记忆 + 工具 schema),出参永远是一个 <code>Action</code>。</dd>
+        <dt>为什么这样设计</dt><dd><b>把「决策」隔离成单一接缝</b>,意味着你接真实大模型时,<b>控制环、生产边界、记忆——一行都不用改</b>。这就是「关注点分离」在 agent 里的最大价值。</dd>
+      </dl>
+      <div class="callout key" style="margin-top:8px">
+        <b>这回答了你最初的疑惑:「agent 到底怎么用大模型?」</b><br>
+        大模型不负责执行、不负责记忆、不负责安全。它<b>只在 ③ 这一步</b>干一件事:<b>看着拼好的上下文,吐出「下一步调哪个工具、传什么参」</b>。
+        其余 10 步(拼上下文、护栏、审批、执行、重试、自评、记忆、trace)都是你写的<b>确定性工程代码</b>包在它外面。
+        <br><br>本项目把这一步用规则写死,正是为了让你看清:<b>去掉大模型,agent 的骨架依然完整。大模型只是那颗可替换的「大脑」。</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 3 逐步 trace ===================== -->
+  <section id="trace" class="trace">
+    <h2>3 · 跟着示例任务,把 11 步走一遍(带真实数据)</h2>
+    <p class="lead">现在把前面所有组件串起来。任务:<b>「查 btc_price 按 10 倍 写进笔记 portfolio」</b>。
+    计划是 <code>查事实 → 算公式 → 记笔记</code> 三步,所以控制环会转 <b>3 圈</b>。</p>
+
+    <p>开跑前:<br>
+      <span class="logtag">[INTENT]</span> parse 得到 <code>{key:btc_price, op:mul, factor:10.0, note_key:portfolio}</code><br>
+      <span class="logtag">[PLAN]</span> <code>查事实 → 算公式 → 记笔记</code></p>
+
+    <div class="tline">
+      <h4><span class="roundtag">第 1 圈</span> 步骤:查事实(lookup)</h4>
+      <div class="kv"><span class="k">① 取步骤</span><span class="v"><code>查事实</code>(cursor=0)</span></div>
+      <div class="kv"><span class="k">② 拼上下文</span><span class="v">working=0(还没历史)、recalled=若干、schemas=3 个工具</span></div>
+      <div class="kv"><span class="k">③ 大脑决策</span><span class="v"><code>Action("lookup", {key:"btc_price"}, risk=LOW)</code></span></div>
+      <div class="kv"><span class="k">④ 输入护栏</span><span class="v">通过(lookup 无危险参数)</span></div>
+      <div class="kv"><span class="k">⑤ 审批</span><span class="v">跳过(LOW 风险,不过门)</span></div>
+      <div class="kv"><span class="k">⑥ 执行</span><span class="v">鉴权✓ → 幂等未命中 → Router→<code>tool_lookup</code> → 返回 <code>50000</code></span></div>
+      <div class="kv"><span class="k">⑦ 输出护栏</span><span class="v">通过</span></div>
+      <div class="kv"><span class="k">⑧ 自评</span><span class="v"><code>continue</code>(成功,且不是最后一步)</span></div>
+      <div class="kv"><span class="k">⑨ 工作记忆</span><span class="v"><code>scratch["lookup"]=50000</code>,cursor→1</span></div>
+      <div class="kv"><span class="k">⑩ 长期记忆</span><span class="v">记一条情节(成功才记)</span></div>
+      <div class="kv"><span class="k">⑪ trace</span><span class="v">记录 #1,累计 cost</span></div>
+      <div class="tags"><span class="logtag">[DECIDE] lookup</span><span class="logtag">[EXEC] 成功→50000</span><span class="logtag">[REFLECT] continue</span></div>
+    </div>
+
+    <div class="tline">
+      <h4><span class="roundtag">第 2 圈</span> 步骤:算公式(calc)</h4>
+      <div class="kv"><span class="k">① 取步骤</span><span class="v"><code>算公式</code>(cursor=1)</span></div>
+      <div class="kv"><span class="k">③ 大脑决策</span><span class="v"><b>注入上一步结果:</b><code>a = scratch["lookup"] = 50000</code> → <code>Action("calculator", {a:50000, op:"mul", b:10.0}, LOW)</code></span></div>
+      <div class="kv"><span class="k">④ 输入护栏</span><span class="v">检查操作数不为空、不超 1e9 → 通过</span></div>
+      <div class="kv"><span class="k">⑥ 执行</span><span class="v"><code>tool_calculator(50000, mul, 10)</code> → <code>500000.0</code></span></div>
+      <div class="kv"><span class="k">⑧ 自评</span><span class="v"><code>continue</code></span></div>
+      <div class="kv"><span class="k">⑨ 工作记忆</span><span class="v"><code>scratch["calc"]=500000.0</code>,cursor→2</span></div>
+      <div class="tags"><span class="logtag">[DECIDE] calculator</span><span class="logtag">[EXEC] 成功→500000</span><span class="logtag">[REFLECT] continue</span></div>
+    </div>
+
+    <div class="tline" style="border-color:var(--c-prod)">
+      <h4><span class="roundtag" style="background:var(--c-prod)">第 3 圈</span> 步骤:记笔记(note)—— 高风险,点亮整条生产边界</div>
+      <div class="kv"><span class="k">① 取步骤</span><span class="v"><code>记笔记</code>(cursor=2,最后一步)</span></div>
+      <div class="kv"><span class="k">③ 大脑决策</span><span class="v">注入 <code>scratch["calc"]=500000</code>,拼出文本 → <code>Action("write_note", {key:"portfolio", text:"portfolio = 500000 (来自 查 btc_price …)"}, <b>risk=HIGH</b>)</code></span></div>
+      <div class="kv"><span class="k">④ 输入护栏</span><span class="v">key=portfolio 合法 ✓;但文本 <b>37 字 &gt; 30 上限 → 截断改写</b>(<span class="logtag">[GUARD] 截断</span>)</span></div>
+      <div class="kv"><span class="k">⑤ 审批</span><span class="v"><b>HIGH → 过人审门</b>,auto 放行(<span class="logtag">[APPROVE]</span>)</span></div>
+      <div class="kv"><span class="k">⑥ 执行</span><span class="v">鉴权✓ → 幂等未命中 → <b>注入故障:第 1 次瞬时失败 → 退避 0.05s → 第 2 次成功</b> → 写入 memory.json → 幂等缓存登记</span></div>
+      <div class="kv"><span class="k">⑧ 自评</span><span class="v"><code>done</code>(成功,且已是最后一步)</span></div>
+      <div class="kv"><span class="k">⑨ 工作记忆</span><span class="v"><code>scratch["note"]="已写入笔记[portfolio]"</code>,done=True</span></div>
+      <div class="tags"><span class="logtag">[GUARD] 37&gt;30 截断</span><span class="logtag">[APPROVE] 通过</span><span class="logtag">[EXEC] 第1次失败→重试→成功</span><span class="logtag">[REFLECT] done</span></div>
+    </div>
+
+    <div class="tline" style="border-style:dashed">
+      <h4>🏁 收尾 _finish(<a class="src">agent.py:739</a>)</h4>
+      <div class="kv"><span class="k">Terminator</span><span class="v">done=True → 跳出 while,停止原因「goal 达成 / 收尾」</span></div>
+      <div class="kv"><span class="k">最终答案</span><span class="v"><code>计算结果=500000,已写入笔记[portfolio]</code></span></div>
+      <div class="tags"><span class="logtag">[ANSWER] 计算结果=500000…</span><span class="logtag">RUN SUMMARY</span></div>
+    </div>
+    <div class="callout tip"><b>你真正该带走的:</b>每一圈,数据都是这样接力的——<b>上一步的输出经由 <code>scratch</code> 工作记忆,注入下一步的参数</b>。这就是 agent「多步链式调用」的底层机制。</div>
+  </section>
+
+  <!-- ===================== 4 分支 ===================== -->
+  <section id="branches">
+    <h2>4 · 三条分支场景(agent 的「应变能力」)</h2>
+    <p class="lead">happy path 谁都会跑。真正体现 agent 价值的,是它<b>出错时怎么自救</b>。项目内置的 <code>evaluate()</code>(<a class="src">agent.py:772</a>)就在测这几条。</p>
+
+    <div class="grid3">
+      <div class="card" style="border-top:4px solid var(--c-ctrl)">
+        <h4 style="margin-top:0">① 改道(replan)</h4>
+        <p style="font-size:14px"><b>触发:</b>查一个不存在的 key(如 <code>doge_price</code>)。<br>
+        <b>过程:</b>lookup 抛 KeyError → error_handler 包成失败 → Reflector 判 <code>replan</code> → 下一圈 <code>Planner.replan</code> 把查询换成兜底 <code>btc_price</code> → 继续算和记。<br>
+        <b>结果:</b>任务<b>照样完成</b>。这就是「出错改道」。</p>
+      </div>
+      <div class="card" style="border-top:4px solid var(--c-prod)">
+        <h4 style="margin-top:0">② 拦截(guard-block)</h4>
+        <p style="font-size:14px"><b>触发:</b>要写的笔记 key 是 <code>system</code>(禁写黑名单)。<br>
+        <b>过程:</b>④ 输入护栏抛 <code>GuardrailBlock</code> → 被主循环捕获、记为 BOUNDARY 失败 → Reflector 判 <code>done</code>(确定性拦截,重试无意义)。<br>
+        <b>结果:</b>任务<b>失败但安全</b>,绝不会写进危险 key。</p>
+      </div>
+      <div class="card" style="border-top:4px solid var(--c-ctrl)">
+        <h4 style="margin-top:0">③ 预算终止(budget)</h4>
+        <p style="font-size:14px"><b>触发:</b>把 <code>max_steps</code> 设成 1。<br>
+        <b>过程:</b>跑完第 1 步后,Terminator 发现 <code>steps_taken(1) ≥ max_steps(1)</code> → 立即停。<br>
+        <b>结果:</b>任务<b>没做完就停</b>。这是防失控的保险丝——宁可没做完,不能烧爆预算。</p>
+      </div>
+    </div>
+
+    <h3>重试 + 幂等,单独再看一眼(最容易被忽视的细节)</h3>
+    <div class="card">
+      <p>示例任务里 <code>write_note</code> 被注入「第一次必失败」。配合幂等演示(<code>demo_idempotency</code>,<a class="src">agent.py:757</a>):</p>
+      <div class="flow">
+        <div class="frow"><span class="node" style="background:var(--c-prod)">第1次调用</span><span class="arrow">→</span>
+          <span class="pill">瞬时失败</span><span class="arrow">→</span><span class="pill">退避 0.05s</span><span class="arrow">→</span>
+          <span class="node" style="background:var(--c-prod)">第2次调用</span><span class="arrow">→</span><span class="pill">成功,写入1次</span></div>
+        <div class="frow"><span class="node" style="background:#64748b">事后再提交同一个写操作</span><span class="arrow">→</span>
+          <span class="pill">幂等 key 命中</span><span class="arrow">→</span><span class="pill">跳过副作用</span><span class="arrow">→</span>
+          <span class="node" style="background:var(--c-mem)">真实写入次数仍是 1</span></div>
+      </div>
+      <p class="footnote"><b>为什么这俩必须配对:</b>光有重试,偶发故障会导致重复写入(想象重复扣款);光有幂等,遇到抖动又会直接失败。<b>重试保证「最终成功」,幂等保证「只生效一次」。</b></p>
+    </div>
+  </section>
+
+  <!-- ===================== 5 易混概念 ===================== -->
+  <section id="concepts">
+    <h2>5 · 五组最容易混的概念</h2>
+    <p class="lead">学这套东西,80% 的困惑来自把下面几对当成一回事。各记两句话就够。</p>
+
+    <div class="grid2">
+      <div class="card"><h4 style="margin-top:0">Guardrails vs ErrorHandler</h4>
+        <p style="font-size:14px"><b>ErrorHandler</b> 管「<b>崩了</b>」:工具抛异常 → 包成 Result(ok=False),事后兜底。<br>
+        <b>Guardrails</b> 管「<b>合法但危险</b>」:没崩,但越界/禁写/超长,需要事前拦或改。<br>
+        <span class="footnote">一个是「正确性」,一个是「安全性」。</span></p></div>
+
+      <div class="card"><h4 style="margin-top:0">Trace vs Memory</h4>
+        <p style="font-size:14px"><b>Trace</b> 给<b>人</b>看:耗时、token、cost,用来 debug 和算钱。<br>
+        <b>Memory</b> 给 <b>agent</b> 看:它做决策的依据。<br>
+        <span class="footnote">你不会让 agent 把「自己花了多少 token」当业务事实去回忆。</span></p></div>
+
+      <div class="card"><h4 style="margin-top:0">Retrieval vs Recency</h4>
+        <p style="font-size:14px"><b>Recency</b> =「最近 N 条」(<code>recent</code>),按<b>时间</b>取,简单但可能全是近期噪声。<br>
+        <b>Retrieval</b> =「最相关 K 条」(<code>semantic_recall</code>),按<b>语义</b>取。<br>
+        <span class="footnote">项目特意写成两个方法,就为证明:取回 ≠ 看最近。</span></p></div>
+
+      <div class="card"><h4 style="margin-top:0">working / long-term / semantic memory</h4>
+        <p style="font-size:14px"><b>working</b>=本次 run 的便签(<code>State</code>,内存,跑完即弃)。<br>
+        <b>long-term</b>=跨进程的持久经验(<code>memory.json</code>)。<br>
+        <b>semantic</b>=不是第三个仓库,是「查 long-term 的方式」。</p></div>
+
+      <div class="card"><h4 style="margin-top:0">Router 路由表 vs Tool schema</h4>
+        <p style="font-size:14px"><b>路由表</b>只认<b>名字</b>:<code>"write_note"</code> → 那个函数,负责「<b>怎么把选中的调起来</b>」。<br>
+        <b>Tool schema</b> 是工具自带的<b>描述+风险</b>,负责让大脑「<b>选谁</b>」。<br>
+        <span class="footnote">schema 决定选谁,路由表决定怎么调。</span></p></div>
+
+      <div class="card" style="background:var(--c-brain-bg)"><h4 style="margin-top:0">规则大脑 vs LLM 大脑</h4>
+        <p style="font-size:14px">本项目 <code>Policy.choose</code> 是写死的 if-else;真实 agent 这里是大模型。<br>
+        <b>但接口完全一样:</b>吃 <code>Context</code>,吐 <code>Action</code>。<br>
+        <span class="footnote">所以换大脑只动一个函数,这就是「接缝」的意义。</span></p></div>
+    </div>
+  </section>
+
+  <!-- ===================== 6 扩展 ===================== -->
+  <section id="extend">
+    <h2>6 · 从 demo 走向真实系统:三个扩展点</h2>
+    <div class="grid3">
+      <div class="comp data"><div class="title" style="font-size:16px">① 加一个工具</div>
+        <p style="font-size:13.5px">1) 写个纯函数(出错就抛);<br>2) 在 <code>_build_tools</code>(<a class="src">agent.py:685</a>)登记 <code>Tool(名, 描述, 风险, fn)</code>;<br>3) 让某步会选中它。<br><br>
+        <b>它会自动</b>享受路由、鉴权、重试、幂等、护栏、trace——因为这些都在<b>执行链路上</b>,不在工具里。</p></div>
+      <div class="comp brain"><div class="title" style="font-size:16px">② 换成真实 LLM</div>
+        <p style="font-size:13.5px">唯一接缝在 <code>Brain.decide</code>(<a class="src">agent.py:648</a>)。<br><br>
+        把 <code>ctx</code>(已是拼好的 system+记忆+工具 schema)序列化成 messages 发给 LLM,让它返回 JSON,解析成 <code>Action</code>。<br><br>
+        <b>控制环、生产边界、记忆,一行都不用动。</b></p></div>
+      <div class="comp ctx"><div class="title" style="font-size:16px">③ 换成向量召回</div>
+        <p style="font-size:13.5px">只改 <code>semantic_recall</code>(<a class="src">agent.py:463</a>):<br><br>
+        把「词重叠打分」换成「query 过 embedding 模型 → 向量库里 ANN 检索 top-k」。<br><br>
+        <code>recent()</code>(按时间)保持不变,正好对照出 retrieval 与 recency 是两条独立路径。</p></div>
+    </div>
+
+    <div class="callout key" style="margin-top:24px">
+      <b>一句话收尾:</b>读懂 <code>agent.py</code> 里 <code>run()</code> 的 ①~⑪ 十一步,你就读懂了「一个 agent 由哪些组件构成、谁调用谁」。<br>
+      它不神秘:<b>在你熟悉的 Controller→Service→DAO 外面,套一圈会自评、会改道、会判停的 while 循环(控制环),再把「决策」这一步留给大模型(LLM 接缝),周围用护栏、审批、重试、幂等、记忆把它兜住(生产边界)。</b> 剩下的全是实现细节。
+    </div>
+    <p class="footnote" style="margin-top:20px">📖 想自己动手验证:终端跑 <code>python agent.py</code>,对照本文的 trace 标签观察每个组件「说话」;<b>连跑两次</b>,第二次开头的 <code>[BOOT]</code> 行会显示读到上次写入,那就是长期记忆跨进程持久化的现场证据。Windows 中文乱码先执行 <code>chcp 65001</code>。</p>
+  </section>
+
+</main>
+</div>
+<a href="#" class="totop" title="回到顶部">↑</a>
+
+<script>
+// 滚动高亮当前章节(scroll-spy)
+const links = Array.from(document.querySelectorAll('nav.toc a'));
+const map = {};
+links.forEach(a=>{ const id=a.getAttribute('href').slice(1); if(id) map[id]=a; });
+const secs = Array.from(document.querySelectorAll('main section[id]'));
+const obs = new IntersectionObserver((entries)=>{
+  entries.forEach(e=>{
+    if(e.isIntersecting){
+      links.forEach(l=>l.classList.remove('active'));
+      const id=e.target.id;
+      // 高亮自身;若是 L0~brain 这些子节,也连带高亮
+      if(map[id]) map[id].classList.add('active');
+    }
+  });
+},{rootMargin:'-20% 0px -70% 0px', threshold:0});
+secs.forEach(s=>obs.observe(s));
+</script>
+</body>
+</html>

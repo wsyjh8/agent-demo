@@ -1,0 +1,83 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Agent2: single run (step from entry)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/debug_agent2.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "stopOnEntry": true,
+            "showReturnValue": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8"
+            }
+        },
+        {
+            "name": "Agent2: debug internal breakpoints",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/debug_agent2.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "stopOnEntry": true,
+            "showReturnValue": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "AGENT2_DEBUG": "1"
+            }
+        },
+        {
+            "name": "Agent2: DeepSeek single run (debug_agent2.py)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/debug_agent2.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "stopOnEntry": true,
+            "showReturnValue": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8",
+                "AGENT2_LLM": "deepseek",
+                "AGENT2_MODEL": "deepseek-v4-flash"
+            }
+        },
+        {
+            "name": "Agent: full demo (agent.py)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/agent.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "stopOnEntry": true,
+            "showReturnValue": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8"
+            }
+        },
+        {
+            "name": "Agent2: full demo (agent2.py)",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/agent2.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "stopOnEntry": true,
+            "showReturnValue": true,
+            "env": {
+                "PYTHONUTF8": "1",
+                "PYTHONIOENCODING": "utf-8"
+            }
+        }
+    ]
+}
