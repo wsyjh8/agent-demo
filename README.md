@@ -10,6 +10,8 @@
 > - **`README.md`(本文)** —— 怎么跑、每个组件「是什么 / 为什么 / 在哪 / 像 Spring 的什么」。
 > - **`ARCHITECTURE.md`** —— 心智模型:四层为什么这么分、最容易混的概念区分、往真实系统怎么扩展。
 
+> 🔀 **本仓库还有第二个 agent:`agent2.py`** —— LLM-native 的「现代主流形态」(真接 Claude / DeepSeek,认知组件塌进模型的 tool-calling 循环)。它和这里的 `agent.py` 怎么对照、区别到底在哪,看 **[`agent-vs-agent2.md`](agent-vs-agent2.md)**。建议先读懂本文的 `agent.py`,再去看那篇对照。
+
 ---
 
 ## 一、30 秒跑起来
